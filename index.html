@@ -21,6 +21,7 @@
   button:disabled { opacity: .5; }
   #status { font-weight: 600; margin-bottom: 12px; }
   #log { font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; margin: 0; color: var(--sub); }
+  [hidden] { display: none !important; }
   .ok { color: var(--ok); } .ng { color: var(--ng); }
 </style>
 </head>
@@ -134,6 +135,7 @@ $('outBtn').onclick = () => { store.del(SESSION_KEY); log('ログアウトしま
 
 log('開き方：' + (isStandalone() ? 'ホーム画面のアプリ' : 'ブラウザ'));
 log('端末：' + navigator.userAgent);
+if (/Line\/|FBAN|FBAV|Instagram|GSA\//.test(navigator.userAgent)) log('アプリ内のブラウザで開いています。Googleログインは Safari で開いたときだけ使えます');
 log('端末への保存：' + (() => { store.set('kakeiProtoTest', '1'); return store.get('kakeiProtoTest') === '1' ? '使える' : '使えない'; })());
 if (store.get(SESSION_KEY)) { log('保存済みのログインがあります'); ping(); } else { showLogin(); }
 </script>
