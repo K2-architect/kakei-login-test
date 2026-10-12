@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="ログイン試作">
+<title>ログイン試作</title>
+<style>
+  :root { color-scheme: light dark; --bg: #F4F5F3; --fg: #1B211E; --sub: #5E6863; --card: #FFFFFF; --line: #DDE2DE; --ok: #1F7A54; --ng: #B3402E; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #121715; --fg: #E8ECE9; --sub: #9AA6A0; --card: #1B221F; --line: #2C3632; --ok: #6CCB9E; --ng: #F08A78; } }
+  body { margin: 0; padding: 24px 16px calc(24px + env(safe-area-inset-bottom)); background: var(--bg); color: var(--fg); font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Hiragino Sans", sans-serif; }
+  main { max-width: 480px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { margin: 0 0 16px; color: var(--sub); font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button { font: inherit; padding: 10px 16px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--fg); }
+  button:disabled { opacity: .5; }
+  #status { font-weight: 600; margin-bottom: 12px; }
+  #log { font: 12px/1.5 ui-monospace, Menlo, monospace; white-space: pre-wrap; word-break: break-all; margin: 0; color: var(--sub); }
+  .ok { color: var(--ok); } .ng { color: var(--ng); }
+</style>
+</head>
+<body>
+<main>
+  <h1>ログイン試作</h1>
+  <p>Googleでログインして、APIから返事が来るかを確かめるページです。家計のデータは扱いません。</p>
+
+  <div class="card">
+    <div id="status">確認中…</div>
+    <div id="gbtn"></div>
+    <div class="row" id="actions" hidden>
+      <button id="pingBtn">もう一度確かめる</button>
+      <button id="outBtn">ログアウト</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <pre id="log"></pre>
+  </div>
+</main>
+
+<script src="config.js"></script>
+<script>
+const CFG = window.APP_CONFIG || {};
+const SESSION_KEY = 'kakeiProtoSession';
+const store = {
+  get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
+  del(k) { try { localStorage.removeItem(k); } catch (e) {} }
+};
+const $ = id => document.getElementById(id);
+const isStandalone = () => window.navigator.standalone === true || (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+
+function log(msg) {
+  const t = new Date().toLocaleTimeString('ja-JP');
+  $('log').textContent += t + '  ' + msg + '\n';
+}
+function setStatus(text, cls) {
+  $('status').textContent = text;
+  $('status').className = cls || '';
+}
+
+// API を呼ぶ。Content-Type は text/plain（事前確認を起こさないため）
+function api(action, payload) {
+  return fetch(CFG.API_URL, {
+    method: 'POST',
+    redirect: 'follow',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+    body: JSON.stringify({ action: action, session: store.get(SESSION_KEY) || '', payload: payload || {} })
+  }).then(r => {
+    if (!r.ok) throw { code: 'NETWORK', message: '通信に失敗しました（' + r.status + '）。' };
+    return r.json();
+  }, () => {
+    throw { code: 'NETWORK', message: '通信できませんでした。電波の良い場所でもう一度お試しください。' };
+  }).then(res => {
+    if (!res || !res.ok) throw (res && res.error) || { code: 'INTERNAL', message: 'エラーが発生しました。' };
+    return res.data;
+  });
+}
+
+function showLogin() {
+  $('actions').hidden = true;
+  $('gbtn').hidden = false;
+  setStatus('ログインしてください');
+}
+
+function ping() {
+  setStatus('APIに問い合わせ中…');
+  const t0 = Date.now();
+  return api('ping').then(d => {
+    setStatus('成功：' + d.email + ' でログイン中', 'ok');
+    log('ping 成功（' + (Date.now() - t0) + 'ミリ秒）');
+    $('gbtn').hidden = true;
+    $('actions').hidden = false;
+  }).catch(err => {
+    log('ping 失敗：' + err.code + ' ' + err.message);
+    if (err.code === 'AUTH_EXPIRED' || err.code === 'AUTH_REQUIRED' || err.code === 'FORBIDDEN') {
+      store.del(SESSION_KEY);
+      showLogin();
+      if (err.code === 'FORBIDDEN') setStatus(err.message, 'ng');
+    } else {
+      setStatus(err.message, 'ng');
+    }
+  });
+}
+
+// Googleログインの結果を受け取る
+function onCredential(res) {
+  log('Googleから結果を受け取りました（' + (res.select_by || '') + '）');
+  setStatus('ログインを確認中…');
+  api('auth.login', { idToken: res.credential }).then(d => {
+    store.set(SESSION_KEY, d.session);
+    log('auth.login 成功。期限：' + new Date(d.exp * 1000).toLocaleDateString('ja-JP'));
+    return ping();
+  }).catch(err => {
+    log('auth.login 失敗：' + err.code + ' ' + err.message);
+    setStatus(err.message, 'ng');
+  });
+}
+
+function initGoogle() {
+  if (!(window.google && google.accounts && google.accounts.id)) { log('Googleログインの部品を読み込めませんでした'); return; }
+  google.accounts.id.initialize({ client_id: CFG.OAUTH_CLIENT_ID, callback: onCredential, ux_mode: 'popup', auto_select: false });
+  google.accounts.id.renderButton($('gbtn'), { theme: 'outline', size: 'large', text: 'signin_with', locale: 'ja' });
+  log('Googleログインのボタンを用意しました');
+}
+
+$('pingBtn').onclick = ping;
+$('outBtn').onclick = () => { store.del(SESSION_KEY); log('ログアウトしました'); showLogin(); };
+
+log('開き方：' + (isStandalone() ? 'ホーム画面のアプリ' : 'ブラウザ'));
+log('端末：' + navigator.userAgent);
+log('端末への保存：' + (() => { store.set('kakeiProtoTest', '1'); return store.get('kakeiProtoTest') === '1' ? '使える' : '使えない'; })());
+if (store.get(SESSION_KEY)) { log('保存済みのログインがあります'); ping(); } else { showLogin(); }
+</script>
+<script src="https://accounts.google.com/gsi/client" async defer onload="initGoogle()"></script>
+</body>
+</html>
