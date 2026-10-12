@@ -32,7 +32,11 @@
 
   <div class="card">
     <div id="status">確認中…</div>
-    <div id="gbtn"></div>
+    <div id="loginBox">
+      <div id="gbtn"></div>
+      <p style="margin:16px 0 8px">上のボタンでうまくいかないときは、こちらを試してください。</p>
+      <button id="altBtn">ページを移動してログイン</button>
+    </div>
     <div class="row" id="actions" hidden>
       <button id="pingBtn">もう一度確かめる</button>
       <button id="outBtn">ログアウト</button>
@@ -85,7 +89,7 @@ function api(action, payload) {
 
 function showLogin() {
   $('actions').hidden = true;
-  $('gbtn').hidden = false;
+  $('loginBox').hidden = false;
   setStatus('ログインしてください');
 }
 
@@ -95,7 +99,7 @@ function ping() {
   return api('ping').then(d => {
     setStatus('成功：' + d.email + ' でログイン中', 'ok');
     log('ping 成功（' + (Date.now() - t0) + 'ミリ秒）');
-    $('gbtn').hidden = true;
+    $('loginBox').hidden = true;
     $('actions').hidden = false;
   }).catch(err => {
     log('ping 失敗：' + err.code + ' ' + err.message);
@@ -130,6 +134,31 @@ function initGoogle() {
   log('Googleログインのボタンを用意しました');
 }
 
+// 別の方法：小窓を使わず、ページごと Google に移動して戻ってくる
+const NONCE_KEY = 'kakeiProtoNonce';
+$('altBtn').onclick = () => {
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => ('0' + b.toString(16)).slice(-2)).join('');
+  store.set(NONCE_KEY, nonce);
+  location.href = 'https://accounts.google.com/o/oauth2/v2/auth?response_type=id_token&scope=openid%20email&prompt=select_account' +
+    '&client_id=' + encodeURIComponent(CFG.OAUTH_CLIENT_ID) +
+    '&redirect_uri=' + encodeURIComponent(location.origin + location.pathname) +
+    '&nonce=' + nonce;
+};
+// Google から戻ってきたとき、URL の # 以降に結果が付いている
+function takeRedirectResult() {
+  const h = new URLSearchParams(location.hash.replace(/^#/, ''));
+  if (!h.get('id_token') && !h.get('error')) return false;
+  history.replaceState(null, '', location.pathname + location.search);
+  if (h.get('error')) { log('Googleからエラーが返りました：' + h.get('error')); return false; }
+  let claims = {};
+  try { claims = JSON.parse(atob(h.get('id_token').split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))); } catch (e) {}
+  const nonce = store.get(NONCE_KEY);
+  store.del(NONCE_KEY);
+  if (!nonce || claims.nonce !== nonce) { log('ログインの照合に失敗しました。もう一度お試しください'); return false; }
+  onCredential({ credential: h.get('id_token'), select_by: 'ページ移動' });
+  return true;
+}
+
 $('pingBtn').onclick = ping;
 $('outBtn').onclick = () => { store.del(SESSION_KEY); log('ログアウトしました'); showLogin(); };
 
@@ -137,7 +166,8 @@ log('開き方：' + (isStandalone() ? 'ホーム画面のアプリ' : 'ブラ�
 log('端末：' + navigator.userAgent);
 if (/Line\/|FBAN|FBAV|Instagram|GSA\//.test(navigator.userAgent)) log('アプリ内のブラウザで開いています。Googleログインは Safari で開いたときだけ使えます');
 log('端末への保存：' + (() => { store.set('kakeiProtoTest', '1'); return store.get('kakeiProtoTest') === '1' ? '使える' : '使えない'; })());
-if (store.get(SESSION_KEY)) { log('保存済みのログインがあります'); ping(); } else { showLogin(); }
+if (takeRedirectResult()) { /* ログインの確認中 */ }
+else if (store.get(SESSION_KEY)) { log('保存済みのログインがあります'); ping(); } else { showLogin(); }
 </script>
 <script src="https://accounts.google.com/gsi/client" async defer onload="initGoogle()"></script>
 </body>
